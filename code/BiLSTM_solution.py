@@ -7,11 +7,17 @@
 
 
 from __future__ import print_function, division
+from torch.utils.data.dataset import random_split
+import time
+from torch.utils.data import DataLoader
+from IPython.core.debugger import set_trace
+import torch.nn.functional as F
+import torch.nn as nn
+from sklearn.model_selection import train_test_split
+from keras.preprocessing.text import Tokenizer
 import itertools
 import os
-from IPython.core.debugger import set_trace
 
-get_ipython().run_line_magic('matplotlib', 'inline')
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -24,6 +30,8 @@ from keras import utils
 
 import torch
 from torch.utils.data import Dataset, DataLoader
+from preprocessing.preprocessing import text_preprocessing
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(42)
 device
@@ -35,6 +43,7 @@ device
 
 
 plt.style.use('ggplot')
+
 
 def plot_history(history):
     acc = history.history['acc']
@@ -56,102 +65,6 @@ def plot_history(history):
     plt.legend()
 
 
-# ## Define text preprocessing functions
-
-# In[29]:
-
-
-# Applying a first round of text cleaning techniques
-import re, string
-from bs4 import BeautifulSoup
-
-def clean_text(text):
-    text = BeautifulSoup(text, 'lxml').get_text()
-    eyes = "[8:=;]"
-    nose = "['`\-]?"
-    text = re.sub(r"https?:\/\/\S+\b|www\.(\w+\.)+\S*"," ", text)    
-    
-    text = re.sub("/"," / ", text)
-    text = re.sub('@(\w+)', '', text)
-    
-    text = re.sub('#{eyes}#{nose}[)d]+|[)d]+#{nose}#{eyes}', "<smile>", text)
-    text = re.sub('#{eyes}#{nose}p+', "<lolface>", text)
-    text = re.sub('#{eyes}#{nose}\(+|\)+#{nose}#{eyes}', "<sadface>", text)
-    text = re.sub('#{eyes}#{nose}[\/|l*]', "<neutralface>", text)
-    text = re.sub('<3',"<heart>", text)
-    # numbers
-    text = re.sub('[-+]?[.\d]*[\d]+[:,.\d]*', " ", text)
-    
-    '''Make text lowercase, remove text in square brackets,remove links,remove punctuation
-    and remove words containing numbers.'''
-    text = text.lower()
-    #text = re.sub('\[.*?\]', '', text)
-    #text = re.sub('<.*?>+', '', text)
-    text = re.sub('[%s]' % re.escape(string.punctuation.replace('<', '').replace('>', '')), ' ', text)
-    text = re.sub('\n', ' ', text)
-    
-    #text = re.sub(r"[^a-zA-Z]", ' ', text)
-    text = ''.join(filter(lambda x: x in string.printable, text))
-    # Single character removal
-    text = re.sub(r"\s+[a-zA-Z]\s+", ' ', text)
-    
-    #text = re.sub('\w*\d\w*', '', text)    
-    
-    return text
-
-import nltk
-from nltk import word_tokenize, pos_tag
-from nltk.corpus import stopwords
-nltk.download('stopwords')
-nltk.download('wordnet')
-nltk.download('punkt')
-nltk.download('averaged_perceptron_tagger')
-def text_preprocessing(text):
-   
-    tokenizer = nltk.tokenize.TweetTokenizer(strip_handles=True, reduce_len=True)
-    
-    lemmatizer = nltk.stem.WordNetLemmatizer() 
-  
-    nopunc = clean_text(text)
-    
-    tokenized_text = tokenizer.tokenize(nopunc)
-    
-    remove_stopwords = [w for w in tokenized_text if w not in stopwords.words('english')]
-    
-    lemmatized = [lemmatizer.lemmatize(i,j[0].lower()) if j[0].lower() in ['a','n','v'] else lemmatizer.lemmatize(i) for i,j in pos_tag(remove_stopwords)]
-    
-    combined_text = ' '.join(lemmatized)
-    return combined_text
-
-
-# ## Read data or preprocessed data if it exists
-
-# In[30]:
-
-
-'''
-try:
-    train = pd.read_csv('../input/preprocessed_train.csv')
-    print('Preprocessed training data shape: ', train.shape)
-    test = pd.read_csv('../input/preprocessed_test.csv')
-    print('Preprocessed testing data shape: ', test.shape)
-    
-except:
-    train = pd.read_csv('../input/train.csv')
-    print('Training data shape: ', train.shape)
-    test = pd.read_csv('../input/test.csv')
-    print('Testing data shape: ', test.shape)
-    
-    train['text'] = train['text'].apply(lambda x: text_preprocessing(x))
-    test['text'] = test['text'].apply(lambda x: text_preprocessing(x))
-    train.to_csv('../input/preprocessed_train.csv')
-    test.to_csv('../input/preprocessed_test.csv')
-
-train.drop(["keyword", "location"], axis = 1, inplace=True)
-test.drop(["keyword", "location"], axis = 1, inplace=True)
-'''
-
-
 # In[31]:
 
 
@@ -163,8 +76,8 @@ print('Testing data shape: ', test.shape)
 train['text'] = train['text'].apply(lambda x: text_preprocessing(x))
 test['text'] = test['text'].apply(lambda x: text_preprocessing(x))
 
-train.drop(["keyword", "location"], axis = 1, inplace=True)
-test.drop(["keyword", "location"], axis = 1, inplace=True)
+train.drop(["keyword", "location"], axis=1, inplace=True)
+test.drop(["keyword", "location"], axis=1, inplace=True)
 
 train.to_csv('../input/preprocessed_train.csv')
 test.to_csv('../input/preprocessed_test.csv')
@@ -175,17 +88,16 @@ test.to_csv('../input/preprocessed_test.csv')
 # In[32]:
 
 
-import numpy as np
-
 def create_embedding_matrix(filepath, word_index, embedding_dim):
-    vocab_size = len(word_index) + 1  # Adding again 1 because of reserved 0 index
+    # Adding again 1 because of reserved 0 index
+    vocab_size = len(word_index) + 1
     embedding_matrix = np.zeros((vocab_size, embedding_dim))
 
     with open(filepath, encoding="utf8") as f:
         for line in f:
             word, *vector = line.split()
             if word in word_index:
-                idx = word_index[word] 
+                idx = word_index[word]
                 embedding_matrix[idx] = np.array(
                     vector, dtype=np.float32)[:embedding_dim]
 
@@ -197,15 +109,14 @@ def create_embedding_matrix(filepath, word_index, embedding_dim):
 # In[33]:
 
 
-from keras.preprocessing.text import Tokenizer
 tokenizer = Tokenizer()
 tokenizer.fit_on_texts(train["text"])
 vocab_size = len(tokenizer.word_index) + 1
-#print(tokenizer.word_index)
+# print(tokenizer.word_index)
 embedding_dim = 50
 embedding_matrix = create_embedding_matrix(
-        '../input/glove.twitter.27B.50d.txt',
-    #'../input/glove.6B.50d.txt',
+    '../input/glove.twitter.27B.50d.txt',
+    # '../input/glove.6B.50d.txt',
     tokenizer.word_index, embedding_dim)
 print(embedding_matrix)
 
@@ -234,7 +145,8 @@ print(test.iloc[13])
 train["text"] = tokenizer.texts_to_sequences(train["text"].values)
 test["text"] = tokenizer.texts_to_sequences(test["text"].values)
 
-vocab_size = len(tokenizer.word_index) + 1  # Adding 1 because of reserved 0 index
+# Adding 1 because of reserved 0 index
+vocab_size = len(tokenizer.word_index) + 1
 
 print(vocab_size)
 
@@ -287,11 +199,9 @@ test_text = test["text"]
 # In[42]:
 
 
-from sklearn.model_selection import train_test_split
-
 target = train["target"]
 train_data, validation_data, train_target, validation_target = train_test_split(
-   train_text, target, test_size=0.2, random_state=1000)
+    train_text, target, test_size=0.2, random_state=1000)
 test_data = test_text
 
 
@@ -313,7 +223,7 @@ class Config(object):
     max_epochs = 10
     lr = 0.25
     batch_size = 1
-    max_sen_len = 20 # Sequence length for RNN
+    max_sen_len = 20  # Sequence length for RNN
     dropout_keep = 0.8
 
 
@@ -321,58 +231,57 @@ class Config(object):
 
 # In[45]:
 
-
-import torch.nn as nn
-import torch.nn.functional as F
-from IPython.core.debugger import set_trace
-
 def create_emb_layer(weights_matrix):
     num_embeddings, embedding_dim = weights_matrix.shape
     #emb_layer = nn.EmbeddingBag(num_embeddings, embedding_dim, sparse=True)
-    emb_layer = nn.Embedding.from_pretrained(weights_matrix, freeze=True) 
-    
-    #if non_trainable:
-        #emb_layer.weight.requires_grad = False
+    emb_layer = nn.Embedding.from_pretrained(weights_matrix, freeze=True)
+
+    # if non_trainable:
+    #emb_layer.weight.requires_grad = False
 
     return emb_layer, num_embeddings, embedding_dim
+
 
 class TwitterClassifier(nn.Module):
     def __init__(self, weights_matrix, config):
         super().__init__()
         self.config = config
-        self.embedding, num_embeddings, embedding_dim = create_emb_layer(weights_matrix)
-       
-        self.lstm = nn.LSTM(input_size = embedding_dim,
-                            hidden_size = self.config.hidden_size,
-                            num_layers = self.config.hidden_layers,
-                            dropout = self.config.dropout_keep,
-                            bidirectional = self.config.bidirectional)
-        
+        self.embedding, num_embeddings, embedding_dim = create_emb_layer(
+            weights_matrix)
+
+        self.lstm = nn.LSTM(input_size=embedding_dim,
+                            hidden_size=self.config.hidden_size,
+                            num_layers=self.config.hidden_layers,
+                            dropout=self.config.dropout_keep,
+                            bidirectional=self.config.bidirectional)
+
         self.dropout = nn.Dropout(0.8)
-        
+
         # Fully-Connected Layer
         self.linear = nn.Linear(
-            self.config.hidden_size * self.config.hidden_layers * (1+self.config.bidirectional),
+            self.config.hidden_size * self.config.hidden_layers *
+            (1+self.config.bidirectional),
             self.config.output_size
         )
-        
+
         # The linear layer that maps from hidden state space to tag space
         #self.linear = nn.Linear(embedding_dim, 2)
-        #self.init_weights()
-        
+        # self.init_weights()
+
     def forward(self, textbatch):
         text = textbatch[0]
         embedded = self.embedding(text)
-        lstm_out, (h_n,c_n) = self.lstm(embedded.view(len(text), 1, -1))
-        final_feature_map = self.dropout(h_n) # shape=(num_layers * num_directions, batch_size, hidden_size)
-        
+        lstm_out, (h_n, c_n) = self.lstm(embedded.view(len(text), 1, -1))
+        # shape=(num_layers * num_directions, batch_size, hidden_size)
+        final_feature_map = self.dropout(h_n)
+
         # Convert input to (batch_size, hidden_size * hidden_layers * num_directions) for linear layer
-        final_feature_map = torch.cat([final_feature_map[i,:,:] for i in range(final_feature_map.shape[0])], dim=1)
+        final_feature_map = torch.cat(
+            [final_feature_map[i, :, :] for i in range(final_feature_map.shape[0])], dim=1)
         #lstm_out, _ = self.lstm(embedded.view(len(text), 1, -1))
         linear = self.linear(final_feature_map)
-    
+
         return linear
-   
 
 
 # ### Create custom Dataset
@@ -389,22 +298,23 @@ class TwitterDataset(Dataset):
         else:
             self.y = None
         self.transforms = transforms
-         
+
     def __len__(self):
         return (len(self.X))
-    
+
     def __getitem__(self, i):
         data = self.X.iloc[i]
         data = torch.tensor(data)
-        
+
         if self.transforms:
             data = self.transforms(data)
-            
+
         if self.y is not None:
             return (data, self.y[i])
         else:
             return data
-        
+
+
 print(train_data.head())
 train_data = TwitterDataset(train_data, train_target)
 validation_data = TwitterDataset(validation_data, validation_target)
@@ -425,7 +335,8 @@ print(embedding_matrix.shape)
 
 
 torch.manual_seed(42)
-model = TwitterClassifier(torch.tensor(embedding_matrix, dtype=torch.float), Config()).to(device)
+model = TwitterClassifier(torch.tensor(
+    embedding_matrix, dtype=torch.float), Config()).to(device)
 #model = TwitterClassifier(torch.tensor(embedding_matrix, dtype=torch.float)).to(device)
 model
 
@@ -460,7 +371,7 @@ def prec_rec_F1(labels, preds):
                 tp += 1
             else:
                 fn += 1
-                
+
     pospreds = sum(preds)
     precision = tp / pospreds
     recall = tp / (fn + tp)
@@ -472,9 +383,6 @@ def prec_rec_F1(labels, preds):
 
 
 # In[51]:
-
-
-from torch.utils.data import DataLoader
 
 def train_func(sub_train_):
 
@@ -504,6 +412,7 @@ def train_func(sub_train_):
     return prec_rec_F1(labels, preds)
     return train_loss / len(sub_train_), train_acc / len(sub_train_)
 
+
 def validate_func(data_):
     loss = 0
     acc = 0
@@ -520,7 +429,7 @@ def validate_func(data_):
             acc += (pred == cls).sum().item()
             labels.append(cls.item())
             preds.append(pred.item())
-            
+
     return prec_rec_F1(labels, preds)
     return loss / len(data_), acc / len(data_)
 
@@ -530,8 +439,6 @@ def validate_func(data_):
 # In[52]:
 
 
-import time
-from torch.utils.data.dataset import random_split
 N_EPOCHS = 10
 min_valid_loss = float('inf')
 
@@ -551,8 +458,10 @@ for epoch in range(N_EPOCHS):
     mins = secs / 60
     secs = secs % 60
 
-    print('Epoch: %d' %(epoch + 1), " | time in %d minutes, %d seconds" %(mins, secs))
-    print(f'\t\tF1 score: {train_F1:.2f} (train)\n\t\tF1 score: {valid_F1:.2f} (valid)')
+    print('Epoch: %d' % (epoch + 1),
+          " | time in %d minutes, %d seconds" % (mins, secs))
+    print(
+        f'\t\tF1 score: {train_F1:.2f} (train)\n\t\tF1 score: {valid_F1:.2f} (valid)')
     #print(f'\tLoss: {train_loss:.4f}(train)\t|\tAcc: {train_acc * 100:.1f}%(train)')
     #print(f'\tLoss: {valid_loss:.4f}(valid)\t|\tAcc: {valid_acc * 100:.1f}%(valid)')
 
@@ -573,6 +482,7 @@ def predict_func(test_data_):
 
     return predictions
 
+
 predictions = predict_func(test_data)
 print(len(predictions))
 
@@ -588,9 +498,10 @@ print(predictions[0].item())
 # In[55]:
 
 
-def submission(submission_file_path,submission_data):
+def submission(submission_file_path, submission_data):
     sample_submission = pd.read_csv(submission_file_path)
-    sample_submission["target"] = [tensor.cpu().numpy()[0] for tensor in submission_data]
+    sample_submission["target"] = [tensor.cpu().numpy()[0]
+                                   for tensor in submission_data]
     print(sample_submission["target"])
     sample_submission.to_csv("submission.csv", index=False)
 
@@ -599,5 +510,4 @@ def submission(submission_file_path,submission_data):
 
 
 submission_file_path = "../input/sample_submission.csv"
-submission(submission_file_path,predictions)
-
+submission(submission_file_path, predictions)
