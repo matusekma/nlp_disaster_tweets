@@ -1,10 +1,12 @@
 *
 
 !code/
-!code/*
+!code/**
 
 !notebook/
 !notebook/*
+
+code/**/__pycache__/
 
 input
 examples
