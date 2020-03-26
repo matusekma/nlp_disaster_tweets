@@ -20,6 +20,7 @@ from sklearn.metrics import accuracy_score, f1_score
 
 from transformers import *
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Since we want to make sure that the results are reproducible every time this kernel runs, we will `seed everything` and fix the randomness
 
@@ -53,7 +54,7 @@ test['text'] = test['text'].apply(lambda x: text_preprocessing(x))
 train.drop(["keyword", "location"], axis=1, inplace=True)
 test.drop(["keyword", "location"], axis=1, inplace=True)
 
-train.head()
+print(train.head())
 
 
 # In[9]:
@@ -212,7 +213,7 @@ def metric(y_true, y_pred):
 # hyperparameters
 max_seq_length = 512
 learning_rate = 1e-5
-num_epochs = 3
+num_epochs = 10
 batch_size = 8
 patience = 2
 file_name = 'model'
@@ -367,7 +368,7 @@ for fold, (train_index, valid_index) in enumerate(skf.split(all_label, all_label
         test, batch_size=batch_size, shuffle=False)
 
     model = NeuralNet()
-    model.cuda()
+    model.to(device)
     loss_fn = torch.nn.CrossEntropyLoss()
 
     param_optimizer = list(model.named_parameters())
@@ -387,7 +388,7 @@ for fold, (train_index, valid_index) in enumerate(skf.split(all_label, all_label
     for epoch in range(num_epochs):
         train_loss = 0.
         for batch in tqdm(train_loader):
-            batch = tuple(t.cuda() for t in batch)
+            batch = tuple(t.to(device) for t in batch)
             x_ids, x_mask, x_sids, y_truth = batch
             y_pred = model(x_ids, x_mask, x_sids)
             loss = loss_fn(y_pred, y_truth)
@@ -401,7 +402,7 @@ for fold, (train_index, valid_index) in enumerate(skf.split(all_label, all_label
         valid_preds_fold = np.zeros((valid_label.size(0), 2))
         with torch.no_grad():
             for i, batch in tqdm(enumerate(valid_loader)):
-                batch = tuple(t.cuda() for t in batch)
+                batch = tuple(t.to(device) for t in batch)
                 x_ids, x_mask, x_sids, y_truth = batch
                 y_pred = model(x_ids, x_mask, x_sids).detach()
                 val_loss += loss_fn(y_pred, y_truth).item() / len(valid_loader)
@@ -431,14 +432,14 @@ for fold, (train_index, valid_index) in enumerate(skf.split(all_label, all_label
     model.eval()
     with torch.no_grad():
         for i, batch in tqdm(enumerate(valid_loader)):
-            batch = tuple(t.cuda() for t in batch)
+            batch = tuple(t.to(device) for t in batch)
             x_ids, x_mask, x_sids, y_truth = batch
             y_pred = model(x_ids, x_mask, x_sids).detach()
             valid_preds_fold[i * batch_size:(i + 1) * batch_size] = F.softmax(
                 y_pred, dim=1).cpu().numpy()
     with torch.no_grad():
         for i, batch in tqdm(enumerate(test_loader)):
-            batch = tuple(t.cuda() for t in batch)
+            batch = tuple(t.to(device) for t in batch)
             x_ids, x_mask, x_sids = batch
             y_pred = model(x_ids, x_mask, x_sids).detach()
             test_preds_fold[i * batch_size:(i + 1) *
