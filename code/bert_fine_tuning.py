@@ -8,6 +8,8 @@ Original file is located at
 """
 
 !pip install transformers
+!pip install --upgrade wandb
+!wandb login e1fd21812403e691f84a8587314a56165bb3a4d0
 
 import matplotlib.pyplot as plt
 from transformers import BertTokenizer, BertModel
@@ -211,6 +213,9 @@ validation_dataloader = DataLoader(
 train_dataloader
 
 from transformers import BertForSequenceClassification, AdamW, BertConfig
+import wandb
+wandb.init(project="onlab")
+
 # Load BertForSequenceClassification, the pretrained BERT model with a single 
 # linear classification layer on top. 
 model = BertForSequenceClassification.from_pretrained(
@@ -219,6 +224,8 @@ model = BertForSequenceClassification.from_pretrained(
     output_attentions = False, 
     output_hidden_states = False
 )
+
+wandb.watch(model)
 
 # Tell pytorch to run this model on the GPU.
 model.to(device)
@@ -232,6 +239,13 @@ optimizer = AdamW(model.parameters(), lr=learning_rate)
 scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps=total_steps)
 
 """### Train"""
+
+def log_to_wandb(loss, out_label_ids, preds):
+  wandb.log({"Average training loss": loss})
+  wandb.log({"F1 score": f1_score(out_label_ids, preds)})
+  wandb.log({"Accuracy": accuracy_score(out_label_ids, preds)})
+  wandb.log({"Precision": precision_score(out_label_ids, preds)})
+  wandb.log({"Recall": recall_score(out_label_ids, preds)})
 
 train_steps = 0
 model.zero_grad()
@@ -274,6 +288,11 @@ for epoch in train_iterator:
   print("          Accuracy: {0:.2f}".format(accuracy_score(out_label_ids, preds)))
   print("          Precision: {0:.2f}".format(precision_score(out_label_ids, preds)))
   print("          Recall: {0:.2f}".format(recall_score(out_label_ids, preds)))
+
+  ##########################################################
+  # Logging last epoch to wandb
+  if(epoch == epochs):
+    log_to_wandb(avg_train_loss, out_label_ids, preds)
 
   #########################################################
   # Validate
