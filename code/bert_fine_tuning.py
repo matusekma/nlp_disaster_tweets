@@ -10,10 +10,10 @@ Original file is located at
 !pip install transformers
 
 import matplotlib.pyplot as plt
-from transformers import BertTokenizer, BertModel, BertForMaskedLM
+from transformers import BertTokenizer, BertModel
 import random
 import numpy as np
-from tqdm import tqdm, trange
+from tqdm import tqdm_notebook as tqdm, trange
 import time
 import logging
 # logging.basicConfig(level=logging.INFO)
@@ -23,7 +23,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset
-from sklearn.metrics import f1_score, precision_score, recall_score
+from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 pd.set_option('max_colwidth', 400)
@@ -55,12 +55,10 @@ seed_everything()
 
 # Applying a first round of text cleaning techniques
 from nltk.corpus import stopwords
-from nltk import word_tokenize, pos_tag
 import nltk
 import re
 import string
 from bs4 import BeautifulSoup
-from textblob import TextBlob
 
 tokenizer = nltk.tokenize.TweetTokenizer(
         strip_handles=True, reduce_len=True)
@@ -89,17 +87,12 @@ def clean_text_no_smiley(text):
     '''Make text lowercase, remove text in square brackets,remove links,remove punctuation
     and remove words containing numbers.'''
     text = text.lower()
-    # text = re.sub('\[.*?\]', '', text)
-    # text = re.sub('<.*?>+', '', text)
     text = re.sub('[%s]' % re.escape(
-        string.punctuation.replace("'", "")), ' ', text)
+        string.punctuation.replace("'", "")), ' ', text) # don't remove ' in words
     text = re.sub('\n', ' ', text)
     text = ''.join(filter(lambda x: x in string.printable, text))
     # Single character removal
     text = re.sub(r"\s+[a-zA-Z]\s+", ' ', text)
-
-    # text = re.sub('\w*\d\w*', '', text)
-
     return text
 
 
@@ -137,15 +130,22 @@ except:
 
 train[['text']].sample(5)
 
-bertTokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
-max_len = 0
+model_type = 'bert-base-uncased'
+bertTokenizer = BertTokenizer.from_pretrained(model_type)
+max_len_train = 0
+max_len_test = 0
 
-# For every sentence...
+# Find the longest sentence
 for sentence in train["text"]:
     input_ids = bertTokenizer.encode(sentence, add_special_tokens=True)
-    max_len = max(max_len, len(input_ids))
+    max_len_train = max(max_len_train, len(input_ids))
 
-print('Max sentence length: ', max_len)
+for sentence in test["text"]:
+    input_ids = bertTokenizer.encode(sentence, add_special_tokens=True)
+    max_len_test = max(max_len_test, len(input_ids))
+
+print('Max sentence length in training data: ', max_len_train)
+print('Max sentence length in testing data: ', max_len_test)
 
 max_len = 64
 
@@ -211,7 +211,6 @@ validation_dataloader = DataLoader(
 train_dataloader
 
 from transformers import BertForSequenceClassification, AdamW, BertConfig
-model_type = "bert-large-uncased"
 # Load BertForSequenceClassification, the pretrained BERT model with a single 
 # linear classification layer on top. 
 model = BertForSequenceClassification.from_pretrained(
@@ -225,8 +224,8 @@ model = BertForSequenceClassification.from_pretrained(
 model.to(device)
 
 from transformers import get_linear_schedule_with_warmup
-learning_rate = 5e-5 #, 3e-5, 2e-5
-epochs = 3 # 2, 3, 4
+learning_rate = 3e-5 #, 3e-5, 2e-5
+epochs = 4 # 2, 3, 4
 total_steps = len(train_dataloader) * epochs
 
 optimizer = AdamW(model.parameters(), lr=learning_rate)
@@ -270,8 +269,11 @@ for epoch in train_iterator:
   avg_train_loss = tr_loss / len(train_dataloader)            
   preds = np.argmax(preds, axis=1)  
   print("")
-  print(" Epoch {0:.2f} Average training loss: {0:.2f}".format(epoch, avg_train_loss))
+  print(" Epoch {0:.0f} Average training loss: {1:.2f}".format(epoch, avg_train_loss))
   print("          F1 score: {0:.2f}".format(f1_score(out_label_ids, preds)))
+  print("          Accuracy: {0:.2f}".format(accuracy_score(out_label_ids, preds)))
+  print("          Precision: {0:.2f}".format(precision_score(out_label_ids, preds)))
+  print("          Recall: {0:.2f}".format(recall_score(out_label_ids, preds)))
 
   #########################################################
   # Validate
@@ -306,7 +308,10 @@ for epoch in train_iterator:
     
   print("")
   print(" Average validation loss: {0:.2f}".format(avg_eval_loss))
-  print(" F1 score: {0:.2f}".format(f1_score(out_label_ids, preds)))
+  print("          F1 score: {0:.2f}".format(f1_score(out_label_ids, preds)))
+  print("          Accuracy: {0:.2f}".format(accuracy_score(out_label_ids, preds)))
+  print("          Precision: {0:.2f}".format(precision_score(out_label_ids, preds)))
+  print("          Recall: {0:.2f}".format(recall_score(out_label_ids, preds)))
 
 """## Predict"""
 
