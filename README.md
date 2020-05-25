@@ -1,2 +1,3 @@
 # nlp_disaster_tweets
-NLP önálló labor, MSc I. félév
+Text classification using Deep Learning
+Kaggle Competition: https://www.kaggle.com/c/nlp-getting-started
